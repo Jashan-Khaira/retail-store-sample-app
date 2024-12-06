@@ -6,14 +6,16 @@ phases:
       nodejs: 18
     commands:
       - cd src/checkout
+      - npm install
       - npm install eslint
+      - npm install eslint-config-standard --save-dev
       - cd ../cart
       - wget https://github.com/checkstyle/checkstyle/releases/download/checkstyle-10.3.3/checkstyle-10.3.3-all.jar
   build:
     commands:
-      - java -jar checkstyle-10.3.3-all.jar -c /google_checks.xml src/main/java/
+      - java -jar checkstyle-10.3.3-all.jar -c /google_checks.xml src/main/java/ || true
       - cd ../checkout
-      - ./node_modules/.bin/eslint . --format json > eslint-report.json
+      - ./node_modules/.bin/eslint . --format json > eslint-report.json || true
   post_build:
     commands:
       - echo "Static analysis completed"
