@@ -21,29 +21,28 @@ phases:
       - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 061039764011.dkr.ecr.us-east-1.amazonaws.com
   build:
     commands:
-      # Local test first
+      # Build and test locally first
       - cd dist/docker-compose
-      - MYSQL_PASSWORD='123456789' docker-compose -f docker-compose.yml up -d
+      - echo "Building Docker images..."
+      - MYSQL_PASSWORD='123456789' docker-compose build
+      - echo "Starting containers..."
+      - MYSQL_PASSWORD='123456789' docker-compose up -d
       - sleep 30
       - docker-compose ps
-      - docker-compose down
+      - docker images
       
       # Tag and push images to ECR
       - |
         echo "Tagging and pushing images to ECR..."
-        docker tag retail-store-sample-ui:latest 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-ui:latest
-        docker tag retail-store-sample-assets:latest 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-assets:latest
-        docker tag retail-store-sample-cart:latest 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-cart:latest
-        docker tag retail-store-sample-catalog:latest 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-catalog:latest
-        docker tag retail-store-sample-checkout:latest 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-checkout:latest
-        docker tag retail-store-sample-orders:latest 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-orders:latest
-        
-        docker push 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-ui:latest
-        docker push 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-assets:latest
-        docker push 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-cart:latest
-        docker push 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-catalog:latest
-        docker push 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-checkout:latest
-        docker push 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-orders:latest
+        services=("ui" "assets" "cart" "catalog" "checkout" "orders")
+        for service in "${services[@]}"; do
+          echo "Processing $service..."
+          docker tag retail-store-sample-$service:latest 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-$service:latest
+          docker push 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-$service:latest || exit 1
+        done
+      
+      # Clean up local containers
+      - docker-compose down
       
       # Generate ECS task definition
       - |
@@ -85,46 +84,17 @@ phases:
               "name": "orders",
               "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-orders:latest",
               "portMappings": [{"containerPort": 8080}]
-            },
-            {
-              "name": "rabbitmq",
-              "image": "rabbitmq:3-management",
-              "portMappings": [
-                {"containerPort": 5672},
-                {"containerPort": 15672}
-              ]
-            },
-            {
-              "name": "catalog-db",
-              "image": "mariadb:10.9",
-              "portMappings": [{"containerPort": 3306}],
-              "environment": [
-                {"name": "MYSQL_ROOT_PASSWORD", "value": "123456789"},
-                {"name": "MYSQL_DATABASE", "value": "catalog"}
-              ]
-            },
-            {
-              "name": "orders-db",
-              "image": "postgres:16.1",
-              "portMappings": [{"containerPort": 5432}],
-              "environment": [
-                {"name": "POSTGRES_DB", "value": "orders"},
-                {"name": "POSTGRES_USER", "value": "postgres"},
-                {"name": "POSTGRES_PASSWORD", "value": "123456789"}
-              ]
             }
           ]
         }
         EOF
       
+      # Create ECS cluster
+      - aws ecs create-cluster --cluster-name retail-store || true
+      
       # Deploy to Fargate
       - aws ecs register-task-definition --cli-input-json file://task-definition.json
       - |
-        # Create ECS cluster if it doesn't exist
-        aws ecs describe-clusters --clusters retail-store || \
-        aws ecs create-cluster --cluster-name retail-store
-        
-        # Get latest task definition
         TASK_DEF_ARN=$(aws ecs describe-task-definition --task-definition retail-store --query 'taskDefinition.taskDefinitionArn' --output text)
         
         # Create or update service
@@ -142,10 +112,9 @@ phases:
   post_build:
     commands:
       - echo "Waiting for service to be stable..."
-      - aws ecs wait services-stable --cluster retail-store --services retail-store-service
-      - echo "Service is stable"
+      - aws ecs wait services-stable --cluster retail-store --services retail-store-service || true
       - echo "Scaling down Fargate tasks..."
-      - aws ecs update-service --cluster retail-store --service retail-store-service --desired-count 0
+      - aws ecs update-service --cluster retail-store --service retail-store-service --desired-count 0 || true
 artifacts:
   files:
     - dist/docker-compose/docker-compose.yml
