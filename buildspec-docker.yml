@@ -3,14 +3,18 @@ phases:
   install:
     runtime-versions:
       nodejs: 18
-  pre_build:
     commands:
-      - echo Install Docker Compose
+      - yum install -y libcrypt docker
       - curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
       - chmod +x /usr/local/bin/docker-compose
+  pre_build:
+    commands:
+      - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 061039764011.dkr.ecr.us-east-1.amazonaws.com
   build:
     commands:
       - docker-compose -f dist/docker-compose/docker-compose.yml build
+      - docker tag retail-store-sample-app:latest 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-repo:latest
+      - docker push 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-repo:latest
       - docker-compose -f dist/docker-compose/docker-compose.yml up -d
       - sleep 30
       - docker-compose -f dist/docker-compose/docker-compose.yml ps
