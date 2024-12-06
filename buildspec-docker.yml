@@ -16,16 +16,9 @@ phases:
       - chmod +x /usr/local/bin/docker-compose
   pre_build:
     commands:
+      - echo Logging in to Docker Hub and Amazon ECR...
       - echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin
       - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 061039764011.dkr.ecr.us-east-1.amazonaws.com
-      # Create ECR repositories
-      - |
-        services=(ui catalog checkout cart assets orders)
-        for service in "${services[@]}"; do
-          aws ecr describe-repositories --repository-names retail-store-$service || \
-          aws ecr create-repository --repository-name retail-store-$service \
-            --image-scanning-configuration scanOnPush=true
-        done
   build:
     commands:
       # Local test first
@@ -35,33 +28,89 @@ phases:
       - docker-compose ps
       - docker-compose down
       
-      # Push to ECR
+      # Tag and push images to ECR
       - |
-        services=(ui catalog checkout cart assets orders)
-        for service in "${services[@]}"; do
-          docker tag retail-store-sample-$service:latest 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-$service:latest
-          docker push 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-$service:latest
-        done
+        echo "Tagging and pushing images to ECR..."
+        docker tag retail-store-sample-ui:latest 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-ui:latest
+        docker tag retail-store-sample-assets:latest 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-assets:latest
+        docker tag retail-store-sample-cart:latest 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-cart:latest
+        docker tag retail-store-sample-catalog:latest 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-catalog:latest
+        docker tag retail-store-sample-checkout:latest 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-checkout:latest
+        docker tag retail-store-sample-orders:latest 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-orders:latest
+        
+        docker push 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-ui:latest
+        docker push 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-assets:latest
+        docker push 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-cart:latest
+        docker push 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-catalog:latest
+        docker push 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-checkout:latest
+        docker push 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-orders:latest
       
-      # Generate Fargate task definition
+      # Generate ECS task definition
       - |
         cat > task-definition.json << 'EOF'
         {
           "family": "retail-store",
           "networkMode": "awsvpc",
           "requiresCompatibilities": ["FARGATE"],
-          "cpu": "2048",
-          "memory": "4096",
+          "cpu": "4096",
+          "memory": "8192",
           "containerDefinitions": [
             {
               "name": "ui",
               "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-ui:latest",
               "essential": true,
+              "portMappings": [{"containerPort": 8080, "hostPort": 8080}]
+            },
+            {
+              "name": "assets",
+              "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-assets:latest",
+              "portMappings": [{"containerPort": 8080}]
+            },
+            {
+              "name": "cart",
+              "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-cart:latest",
+              "portMappings": [{"containerPort": 8080}]
+            },
+            {
+              "name": "catalog",
+              "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-catalog:latest",
+              "portMappings": [{"containerPort": 8080}]
+            },
+            {
+              "name": "checkout",
+              "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-checkout:latest",
+              "portMappings": [{"containerPort": 8080}]
+            },
+            {
+              "name": "orders",
+              "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-orders:latest",
+              "portMappings": [{"containerPort": 8080}]
+            },
+            {
+              "name": "rabbitmq",
+              "image": "rabbitmq:3-management",
               "portMappings": [
-                {
-                  "containerPort": 80,
-                  "protocol": "tcp"
-                }
+                {"containerPort": 5672},
+                {"containerPort": 15672}
+              ]
+            },
+            {
+              "name": "catalog-db",
+              "image": "mariadb:10.9",
+              "portMappings": [{"containerPort": 3306}],
+              "environment": [
+                {"name": "MYSQL_ROOT_PASSWORD", "value": "123456789"},
+                {"name": "MYSQL_DATABASE", "value": "catalog"}
+              ]
+            },
+            {
+              "name": "orders-db",
+              "image": "postgres:16.1",
+              "portMappings": [{"containerPort": 5432}],
+              "environment": [
+                {"name": "POSTGRES_DB", "value": "orders"},
+                {"name": "POSTGRES_USER", "value": "postgres"},
+                {"name": "POSTGRES_PASSWORD", "value": "123456789"}
               ]
             }
           ]
@@ -85,7 +134,7 @@ phases:
           --task-definition $TASK_DEF_ARN \
           --desired-count 1 \
           --launch-type FARGATE \
-          --network-configuration "awsvpcConfiguration={subnets=[subnet-YOUR_SUBNET_ID],securityGroups=[sg-YOUR_SG_ID],assignPublicIp=ENABLED}" || \
+          --network-configuration "awsvpcConfiguration={subnets=[subnet-06aa37fd],securityGroups=[sg-068ffbbf3f461bce2],assignPublicIp=ENABLED}" || \
         aws ecs update-service \
           --cluster retail-store \
           --service retail-store-service \
@@ -95,9 +144,8 @@ phases:
       - echo "Waiting for service to be stable..."
       - aws ecs wait services-stable --cluster retail-store --services retail-store-service
       - echo "Service is stable"
-      # Cleanup after successful deployment
+      - echo "Scaling down Fargate tasks..."
       - aws ecs update-service --cluster retail-store --service retail-store-service --desired-count 0
-      - echo "Scaled down Fargate tasks"
 artifacts:
   files:
     - dist/docker-compose/docker-compose.yml
