@@ -1,41 +1,26 @@
 version: 0.2
-
 phases:
   install:
     runtime-versions:
       java: corretto17
       nodejs: 18
     commands:
-      # Install CheckStyle
-      - wget https://github.com/checkstyle/checkstyle/releases/download/checkstyle-10.3.3/checkstyle-10.3.3-all.jar
-      # Install ESLint
       - cd src/checkout
       - npm install eslint
-
-  pre_build:
-    commands:
-      - echo "Starting static code analysis"
-
+      - cd ../cart
+      - wget https://github.com/checkstyle/checkstyle/releases/download/checkstyle-10.3.3/checkstyle-10.3.3-all.jar
   build:
     commands:
-      # Run CheckStyle on Cart Service
-      - cd ../cart
       - java -jar checkstyle-10.3.3-all.jar -c /google_checks.xml src/main/java/
-      
-      # Run ESLint on Checkout Service
       - cd ../checkout
-      - ./node_modules/.bin/eslint .
-
+      - ./node_modules/.bin/eslint . --format json > eslint-report.json
   post_build:
     commands:
       - echo "Static analysis completed"
-
-reports:
-  checkstyle-report:
-    files:
-      - 'checkstyle-result.xml'
-    file-format: JUNITXML
-
+artifacts:
+  files:
+    - src/cart/checkstyle-result.xml
+    - src/checkout/eslint-report.json
 notifications:
   rules:
     - type: EVENT
@@ -46,8 +31,3 @@ notifications:
       target:
         type: SNS
         target-address: arn:aws:sns:us-east-1:061039764011:retail-store-build-notifications:3ab6d246-2dfc-4405-9544-3cc67522e948
-
-artifacts:
-  files:
-    - checkstyle-result.xml
-    - eslint-report.json
