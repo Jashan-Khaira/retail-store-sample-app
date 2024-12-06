@@ -164,7 +164,7 @@ phases:
           --task-definition $SUPPORT_TASK_DEF_ARN \
           --desired-count 1 \
           --launch-type FARGATE \
-          --network-configuration "awsvpcConfiguration={subnets=[subnet-06aa37fd],securityGroups=[sg-068ffbbf3f461bce2],assignPublicIp=ENABLED}" || \
+          --network-configuration "awsvpcConfiguration={subnets=[subnet-00fb14dcb92d6fe8f],securityGroups=[sg-068ffbbf3f461bce2],assignPublicIp=ENABLED}" || \
         aws ecs update-service \
           --cluster retail-store \
           --service retail-store-support-service \
@@ -187,7 +187,7 @@ phases:
           --task-definition $MAIN_TASK_DEF_ARN \
           --desired-count 1 \
           --launch-type FARGATE \
-          --network-configuration "awsvpcConfiguration={subnets=[subnet-06aa37fd],securityGroups=[sg-068ffbbf3f461bce2],assignPublicIp=ENABLED}" || \
+          --network-configuration "awsvpcConfiguration={subnets=[subnet-00fb14dcb92d6fe8f],securityGroups=[sg-068ffbbf3f461bce2],assignPublicIp=ENABLED}" || \
         aws ecs update-service \
           --cluster retail-store \
           --service retail-store-main-service \
