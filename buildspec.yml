@@ -13,15 +13,31 @@ phases:
       - wget https://github.com/checkstyle/checkstyle/releases/download/checkstyle-10.3.3/checkstyle-10.3.3-all.jar
   build:
     commands:
-      - java -jar checkstyle-10.3.3-all.jar -c /google_checks.xml src/main/java/ || true
+      # Run Java checkstyle and capture exit code
+      - |
+        java -jar checkstyle-10.3.3-all.jar -c /google_checks.xml src/main/java/ > checkstyle-output.txt
+        CHECKSTYLE_EXIT=$?
+      
+      # Run ESLint and capture exit code
       - cd ../checkout
-      - ./node_modules/.bin/eslint . --format json > eslint-report.json || true
+      - |
+        ./node_modules/.bin/eslint . --format json > eslint-report.json
+        ESLINT_EXIT=$?
+      
+      # Check for critical issues and fail if found
+      - |
+        if [ $CHECKSTYLE_EXIT -eq 2 ] || [ $ESLINT_EXIT -eq 2 ]; then
+          echo "Critical issues found in static analysis"
+          aws sns publish --topic-arn arn:aws:sns:us-east-1:061039764011:retail-store-build-notifications --message "Critical issues found in static code analysis. Check the CodeBuild logs for details."
+          exit 1
+        fi
   post_build:
     commands:
       - echo "Static analysis completed"
 artifacts:
   files:
     - src/cart/checkstyle-result.xml
+    - src/cart/checkstyle-output.txt
     - src/checkout/eslint-report.json
 notifications:
   rules:
@@ -32,4 +48,4 @@ notifications:
         - BUILD_PHASE_FAILURE
       target:
         type: SNS
-        target-address: arn:aws:sns:us-east-1:061039764011:retail-store-build-notifications:3ab6d246-2dfc-4405-9544-3cc67522e948
+        target-address: arn:aws:sns:us-east-1:061039764011:retail-store-build-notifications
