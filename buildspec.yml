@@ -36,6 +36,17 @@ reports:
       - 'checkstyle-result.xml'
     file-format: JUNITXML
 
+notifications:
+  rules:
+    - type: EVENT
+      detail-type: FULL
+      event-pattern:
+        - PHASE_CHANGE
+        - BUILD_PHASE_FAILURE
+      target:
+        type: SNS
+        target-address: arn:aws:sns:us-east-1:061039764011:retail-store-build-notifications:3ab6d246-2dfc-4405-9544-3cc67522e948
+
 artifacts:
   files:
     - checkstyle-result.xml
