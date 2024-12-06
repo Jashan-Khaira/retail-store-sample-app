@@ -12,6 +12,7 @@ phases:
       - chmod +x /usr/local/bin/docker-compose
   pre_build:
     commands:
+      - echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin
       - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 061039764011.dkr.ecr.us-east-1.amazonaws.com
   build:
     commands:
