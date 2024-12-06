@@ -4,7 +4,7 @@ phases:
     runtime-versions:
       nodejs: 18
     commands:
-      - yum install -y libcrypt docker
+      - dnf install -y glibc-gcompat docker
       - curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
       - chmod +x /usr/local/bin/docker-compose
   pre_build:
