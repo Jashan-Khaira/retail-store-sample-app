@@ -52,95 +52,22 @@ phases:
       # Clean up local containers
       - docker-compose down
       
-      # Generate ECS task definition
+      # Generate ECS task definition for supporting services (databases, message broker)
       - |
-        cat > task-definition.json << 'EOF'
+        cat > task-definition-support.json << 'EOF'
         {
-          "family": "retail-store",
+          "family": "retail-store-support",
           "networkMode": "awsvpc",
           "requiresCompatibilities": ["FARGATE"],
-          "cpu": "4096",
-          "memory": "8192",
+          "cpu": "2048",
+          "memory": "4096",
           "taskRoleArn": "arn:aws:iam::061039764011:role/service-role/codebuild-retail-store-static-analysis-service-role",
           "executionRoleArn": "arn:aws:iam::061039764011:role/service-role/codebuild-retail-store-static-analysis-service-role",
           "containerDefinitions": [
             {
-              "name": "ui",
-              "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-ui:latest",
-              "essential": true,
-              "portMappings": [{"containerPort": 8080}],
-              "logConfiguration": {
-                "logDriver": "awslogs",
-                "options": {
-                  "awslogs-group": "/ecs/retail-store",
-                  "awslogs-region": "us-east-1",
-                  "awslogs-stream-prefix": "ui"
-                }
-              }
-            },
-            {
-              "name": "assets",
-              "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-assets:latest",
-              "portMappings": [{"containerPort": 8080}],
-              "logConfiguration": {
-                "logDriver": "awslogs",
-                "options": {
-                  "awslogs-group": "/ecs/retail-store",
-                  "awslogs-region": "us-east-1",
-                  "awslogs-stream-prefix": "assets"
-                }
-              }
-            },
-            {
-              "name": "cart",
-              "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-cart:latest",
-              "portMappings": [{"containerPort": 8080}],
-              "dependsOn": [
-                {
-                  "containerName": "carts-db",
-                  "condition": "START"
-                }
-              ],
-              "logConfiguration": {
-                "logDriver": "awslogs",
-                "options": {
-                  "awslogs-group": "/ecs/retail-store",
-                  "awslogs-region": "us-east-1",
-                  "awslogs-stream-prefix": "cart"
-                }
-              }
-            },
-            {
               "name": "carts-db",
               "image": "amazon/dynamodb-local:1.20.0",
-              "portMappings": [{"containerPort": 8000}],
-              "logConfiguration": {
-                "logDriver": "awslogs",
-                "options": {
-                  "awslogs-group": "/ecs/retail-store",
-                  "awslogs-region": "us-east-1",
-                  "awslogs-stream-prefix": "carts-db"
-                }
-              }
-            },
-            {
-              "name": "catalog",
-              "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-catalog:latest",
-              "portMappings": [{"containerPort": 8080}],
-              "dependsOn": [
-                {
-                  "containerName": "catalog-db",
-                  "condition": "START"
-                }
-              ],
-              "logConfiguration": {
-                "logDriver": "awslogs",
-                "options": {
-                  "awslogs-group": "/ecs/retail-store",
-                  "awslogs-region": "us-east-1",
-                  "awslogs-stream-prefix": "catalog"
-                }
-              }
+              "portMappings": [{"containerPort": 8000}]
             },
             {
               "name": "catalog-db",
@@ -149,70 +76,12 @@ phases:
               "environment": [
                 {"name": "MYSQL_ROOT_PASSWORD", "value": "123456789"},
                 {"name": "MYSQL_DATABASE", "value": "catalog"}
-              ],
-              "logConfiguration": {
-                "logDriver": "awslogs",
-                "options": {
-                  "awslogs-group": "/ecs/retail-store",
-                  "awslogs-region": "us-east-1",
-                  "awslogs-stream-prefix": "catalog-db"
-                }
-              }
-            },
-            {
-              "name": "checkout",
-              "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-checkout:latest",
-              "portMappings": [{"containerPort": 8080}],
-              "dependsOn": [
-                {
-                  "containerName": "checkout-redis",
-                  "condition": "START"
-                }
-              ],
-              "logConfiguration": {
-                "logDriver": "awslogs",
-                "options": {
-                  "awslogs-group": "/ecs/retail-store",
-                  "awslogs-region": "us-east-1",
-                  "awslogs-stream-prefix": "checkout"
-                }
-              }
+              ]
             },
             {
               "name": "checkout-redis",
               "image": "redis:6-alpine",
-              "portMappings": [{"containerPort": 6379}],
-              "logConfiguration": {
-                "logDriver": "awslogs",
-                "options": {
-                  "awslogs-group": "/ecs/retail-store",
-                  "awslogs-region": "us-east-1",
-                  "awslogs-stream-prefix": "checkout-redis"
-                }
-              }
-            },
-            {
-              "name": "orders",
-              "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-orders:latest",
-              "portMappings": [{"containerPort": 8080}],
-              "dependsOn": [
-                {
-                  "containerName": "orders-db",
-                  "condition": "START"
-                },
-                {
-                  "containerName": "rabbitmq",
-                  "condition": "START"
-                }
-              ],
-              "logConfiguration": {
-                "logDriver": "awslogs",
-                "options": {
-                  "awslogs-group": "/ecs/retail-store",
-                  "awslogs-region": "us-east-1",
-                  "awslogs-stream-prefix": "orders"
-                }
-              }
+              "portMappings": [{"containerPort": 6379}]
             },
             {
               "name": "orders-db",
@@ -222,15 +91,7 @@ phases:
                 {"name": "POSTGRES_DB", "value": "orders"},
                 {"name": "POSTGRES_USER", "value": "postgres"},
                 {"name": "POSTGRES_PASSWORD", "value": "123456789"}
-              ],
-              "logConfiguration": {
-                "logDriver": "awslogs",
-                "options": {
-                  "awslogs-group": "/ecs/retail-store",
-                  "awslogs-region": "us-east-1",
-                  "awslogs-stream-prefix": "orders-db"
-                }
-              }
+              ]
             },
             {
               "name": "rabbitmq",
@@ -238,46 +99,109 @@ phases:
               "portMappings": [
                 {"containerPort": 5672},
                 {"containerPort": 15672}
-              ],
-              "logConfiguration": {
-                "logDriver": "awslogs",
-                "options": {
-                  "awslogs-group": "/ecs/retail-store",
-                  "awslogs-region": "us-east-1",
-                  "awslogs-stream-prefix": "rabbitmq"
-                }
-              }
+              ]
+            }
+          ]
+        }
+        EOF
+
+      # Generate ECS task definition for main services
+      - |
+        cat > task-definition-main.json << 'EOF'
+        {
+          "family": "retail-store-main",
+          "networkMode": "awsvpc",
+          "requiresCompatibilities": ["FARGATE"],
+          "cpu": "2048",
+          "memory": "4096",
+          "taskRoleArn": "arn:aws:iam::061039764011:role/service-role/codebuild-retail-store-static-analysis-service-role",
+          "executionRoleArn": "arn:aws:iam::061039764011:role/service-role/codebuild-retail-store-static-analysis-service-role",
+          "containerDefinitions": [
+            {
+              "name": "ui",
+              "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-ui:latest",
+              "essential": true,
+              "portMappings": [{"containerPort": 8080}]
+            },
+            {
+              "name": "assets",
+              "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-assets:latest",
+              "portMappings": [{"containerPort": 8080}]
+            },
+            {
+              "name": "cart",
+              "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-cart:latest",
+              "portMappings": [{"containerPort": 8080}]
+            },
+            {
+              "name": "catalog",
+              "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-catalog:latest",
+              "portMappings": [{"containerPort": 8080}]
+            },
+            {
+              "name": "checkout",
+              "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-checkout:latest",
+              "portMappings": [{"containerPort": 8080}]
+            },
+            {
+              "name": "orders",
+              "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-orders:latest",
+              "portMappings": [{"containerPort": 8080}]
             }
           ]
         }
         EOF
       
-      # Deploy to Fargate
-      - aws ecs register-task-definition --cli-input-json file://task-definition.json
+      # Deploy supporting services first
+      - aws ecs register-task-definition --cli-input-json file://task-definition-support.json
       - |
-        TASK_DEF_ARN=$(aws ecs describe-task-definition --task-definition retail-store --query 'taskDefinition.taskDefinitionArn' --output text)
+        SUPPORT_TASK_DEF_ARN=$(aws ecs describe-task-definition --task-definition retail-store-support --query 'taskDefinition.taskDefinitionArn' --output text)
         
-        # Create or update service
+        # Create or update support service
         aws ecs create-service \
           --cluster retail-store \
-          --service-name retail-store-service \
-          --task-definition $TASK_DEF_ARN \
+          --service-name retail-store-support-service \
+          --task-definition $SUPPORT_TASK_DEF_ARN \
           --desired-count 1 \
           --launch-type FARGATE \
           --network-configuration "awsvpcConfiguration={subnets=[subnet-06aa37fd],securityGroups=[sg-068ffbbf3f461bce2],assignPublicIp=ENABLED}" || \
         aws ecs update-service \
           --cluster retail-store \
-          --service retail-store-service \
-          --task-definition $TASK_DEF_ARN \
+          --service retail-store-support-service \
+          --task-definition $SUPPORT_TASK_DEF_ARN \
+          --force-new-deployment
+
+      # Wait for support services to be stable
+      - echo "Waiting for support services to be stable..."
+      - aws ecs wait services-stable --cluster retail-store --services retail-store-support-service || true
+      
+      # Deploy main services
+      - aws ecs register-task-definition --cli-input-json file://task-definition-main.json
+      - |
+        MAIN_TASK_DEF_ARN=$(aws ecs describe-task-definition --task-definition retail-store-main --query 'taskDefinition.taskDefinitionArn' --output text)
+        
+        # Create or update main service
+        aws ecs create-service \
+          --cluster retail-store \
+          --service-name retail-store-main-service \
+          --task-definition $MAIN_TASK_DEF_ARN \
+          --desired-count 1 \
+          --launch-type FARGATE \
+          --network-configuration "awsvpcConfiguration={subnets=[subnet-06aa37fd],securityGroups=[sg-068ffbbf3f461bce2],assignPublicIp=ENABLED}" || \
+        aws ecs update-service \
+          --cluster retail-store \
+          --service retail-store-main-service \
+          --task-definition $MAIN_TASK_DEF_ARN \
           --force-new-deployment
   post_build:
     commands:
-      - echo "Waiting for service to be stable..."
-      - aws ecs wait services-stable --cluster retail-store --services retail-store-service || true
+      - echo "Waiting for services to be stable..."
+      - aws ecs wait services-stable --cluster retail-store --services retail-store-main-service || true
       - echo "Service deployment completed"
 artifacts:
   files:
     - dist/docker-compose/docker-compose.yml
-    - task-definition.json
+    - task-definition-support.json
+    - task-definition-main.json
     - appspec.yml
   name: docker-artifact
