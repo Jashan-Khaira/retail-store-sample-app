@@ -1,4 +1,5 @@
 version: 0.2
+
 phases:
   install:
     runtime-versions:
@@ -11,44 +12,40 @@ phases:
       - npm install eslint-config-standard --save-dev
       - cd ../cart
       - wget https://github.com/checkstyle/checkstyle/releases/download/checkstyle-10.3.3/checkstyle-10.3.3-all.jar
+
   build:
     commands:
-      # Run Java checkstyle and store output
-      - echo "Running Checkstyle analysis..."
-      - java -jar checkstyle-10.3.3-all.jar -c /google_checks.xml src/main/java/ > checkstyle-output.txt || export CHECKSTYLE_EXIT=$?
-      - echo "Checkstyle exit code: $CHECKSTYLE_EXIT"
-      
-      # Run ESLint and store output
-      - cd ../checkout
-      - echo "Running ESLint analysis..."
-      - ./node_modules/.bin/eslint . --format json > eslint-report.json || export ESLINT_EXIT=$?
-      - echo "ESLint exit code: $ESLINT_EXIT"
-      
-      # Process results and notify if issues found
+      # Run Java checkstyle and capture exit code
       - |
-        if [ ! -z "$CHECKSTYLE_EXIT" ] && [ "$CHECKSTYLE_EXIT" -eq 2 ] || [ ! -z "$ESLINT_EXIT" ] && [ "$ESLINT_EXIT" -eq 2 ]; then
+        java -jar checkstyle-10.3.3-all.jar -c /google_checks.xml src/main/java/ > checkstyle-output.txt
+        CHECKSTYLE_EXIT=$?
+      
+      # Run ESLint and capture exit code
+      - cd ../checkout
+      - |
+        ./node_modules/.bin/eslint . --format json > eslint-report.json
+        ESLINT_EXIT=$?
+      
+      # Check for critical issues and fail if found
+      - |
+        if [ $CHECKSTYLE_EXIT -eq 2 ] || [ $ESLINT_EXIT -eq 2 ]; then
           echo "Critical issues found in static analysis"
-          aws sns publish \
-            --topic-arn arn:aws:sns:us-east-1:061039764011:retail-store-build-notifications \
-            --message "Critical issues found in static code analysis. Check the CodeBuild logs for details." \
-            --region us-east-1
+          aws sns publish --topic-arn arn:aws:sns:us-east-1:061039764011:retail-store-build-notifications --message "Build failed: Critical issues found in static code analysis. Check the CodeBuild logs for details."
           exit 1
         fi
+
   post_build:
     commands:
       - echo "Static analysis completed"
       - |
-        if [ -s src/cart/checkstyle-output.txt ]; then
-          echo "Checkstyle findings:"
-          cat src/cart/checkstyle-output.txt
+        if [ $CODEBUILD_BUILD_SUCCEEDING -eq 1 ]; then
+          aws sns publish --topic-arn arn:aws:sns:us-east-1:061039764011:retail-store-build-notifications --message "Build succeeded: Static analysis completed successfully."
+        else
+          aws sns publish --topic-arn arn:aws:sns:us-east-1:061039764011:retail-store-build-notifications --message "Build failed: Static analysis encountered issues. Check the CodeBuild logs for details."
         fi
-      - |
-        if [ -s src/checkout/eslint-report.json ]; then
-          echo "ESLint findings:"
-          cat src/checkout/eslint-report.json
-        fi
+
 artifacts:
   files:
     - src/cart/checkstyle-output.txt
     - src/checkout/eslint-report.json
-    - buildspec.yml
+  name: static-analysis-reports-$(date +%Y-%m-%d-%H-%M-%S).zip
