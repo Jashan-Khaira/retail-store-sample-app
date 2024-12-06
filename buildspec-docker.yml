@@ -21,10 +21,8 @@ phases:
       - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 061039764011.dkr.ecr.us-east-1.amazonaws.com
   build:
     commands:
-      # Build and test locally first
+      # Test locally first
       - cd dist/docker-compose
-      - echo "Building Docker images..."
-      - MYSQL_PASSWORD='123456789' docker-compose build
       - echo "Starting containers..."
       - MYSQL_PASSWORD='123456789' docker-compose up -d
       - sleep 30
@@ -34,11 +32,19 @@ phases:
       # Tag and push images to ECR
       - |
         echo "Tagging and pushing images to ECR..."
-        services=("ui" "assets" "cart" "catalog" "checkout" "orders")
-        for service in "${services[@]}"; do
+        declare -A images=(
+          ["ui"]="public.ecr.aws/aws-containers/retail-store-sample-ui:0.8.3"
+          ["assets"]="public.ecr.aws/aws-containers/retail-store-sample-assets:0.8.3"
+          ["cart"]="public.ecr.aws/aws-containers/retail-store-sample-cart:0.8.3"
+          ["catalog"]="public.ecr.aws/aws-containers/retail-store-sample-catalog:0.8.3"
+          ["checkout"]="public.ecr.aws/aws-containers/retail-store-sample-checkout:0.8.3"
+          ["orders"]="public.ecr.aws/aws-containers/retail-store-sample-orders:0.8.3"
+        )
+        
+        for service in "${!images[@]}"; do
           echo "Processing $service..."
-          docker tag retail-store-sample-$service:latest 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-$service:latest
-          docker push 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-$service:latest || exit 1
+          docker tag "${images[$service]}" "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-$service:latest"
+          docker push "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-$service:latest" || exit 1
         done
       
       # Clean up local containers
@@ -53,6 +59,7 @@ phases:
           "requiresCompatibilities": ["FARGATE"],
           "cpu": "4096",
           "memory": "8192",
+          "executionRoleArn": "arn:aws:iam::061039764011:role/ecsTaskExecutionRole",
           "containerDefinitions": [
             {
               "name": "ui",
