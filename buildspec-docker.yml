@@ -5,12 +5,13 @@ phases:
       nodejs: 18
       python: 3.9
     commands:
-      - pip install docker-compose
+      - pip install "docker-compose<2.0.0"
   pre_build:
     commands:
       - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 061039764011.dkr.ecr.us-east-1.amazonaws.com
   build:
     commands:
+      - export MYSQL_PASSWORD='123456789'
       - docker-compose -f dist/docker-compose/docker-compose.yml build
       - docker tag retail-store-sample-app:latest 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-repo:latest
       - docker push 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-repo:latest
