@@ -9,7 +9,7 @@ phases:
       nodejs: 18
     commands:
       - yum update -y
-      - yum install -y docker
+      - yum install -y docker jq
       - nohup dockerd &
       - sleep 5
       - curl -SL https://github.com/docker/compose/releases/download/v2.23.3/docker-compose-linux-x86_64 -o /usr/local/bin/docker-compose
@@ -18,14 +18,89 @@ phases:
     commands:
       - echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin
       - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 061039764011.dkr.ecr.us-east-1.amazonaws.com
+      # Create ECR repositories
+      - |
+        services=(ui catalog checkout cart assets orders)
+        for service in "${services[@]}"; do
+          aws ecr describe-repositories --repository-names retail-store-$service || \
+          aws ecr create-repository --repository-name retail-store-$service \
+            --image-scanning-configuration scanOnPush=true
+        done
   build:
     commands:
+      # Local test first
       - cd dist/docker-compose
       - MYSQL_PASSWORD='123456789' docker-compose -f docker-compose.yml up -d
       - sleep 30
       - docker-compose ps
       - docker-compose down
+      
+      # Push to ECR
+      - |
+        services=(ui catalog checkout cart assets orders)
+        for service in "${services[@]}"; do
+          docker tag retail-store-sample-$service:latest 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-$service:latest
+          docker push 061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-$service:latest
+        done
+      
+      # Generate Fargate task definition
+      - |
+        cat > task-definition.json << 'EOF'
+        {
+          "family": "retail-store",
+          "networkMode": "awsvpc",
+          "requiresCompatibilities": ["FARGATE"],
+          "cpu": "2048",
+          "memory": "4096",
+          "containerDefinitions": [
+            {
+              "name": "ui",
+              "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-ui:latest",
+              "essential": true,
+              "portMappings": [
+                {
+                  "containerPort": 80,
+                  "protocol": "tcp"
+                }
+              ]
+            }
+          ]
+        }
+        EOF
+      
+      # Deploy to Fargate
+      - aws ecs register-task-definition --cli-input-json file://task-definition.json
+      - |
+        # Create ECS cluster if it doesn't exist
+        aws ecs describe-clusters --clusters retail-store || \
+        aws ecs create-cluster --cluster-name retail-store
+        
+        # Get latest task definition
+        TASK_DEF_ARN=$(aws ecs describe-task-definition --task-definition retail-store --query 'taskDefinition.taskDefinitionArn' --output text)
+        
+        # Create or update service
+        aws ecs create-service \
+          --cluster retail-store \
+          --service-name retail-store-service \
+          --task-definition $TASK_DEF_ARN \
+          --desired-count 1 \
+          --launch-type FARGATE \
+          --network-configuration "awsvpcConfiguration={subnets=[subnet-YOUR_SUBNET_ID],securityGroups=[sg-YOUR_SG_ID],assignPublicIp=ENABLED}" || \
+        aws ecs update-service \
+          --cluster retail-store \
+          --service retail-store-service \
+          --task-definition $TASK_DEF_ARN
+  post_build:
+    commands:
+      - echo "Waiting for service to be stable..."
+      - aws ecs wait services-stable --cluster retail-store --services retail-store-service
+      - echo "Service is stable"
+      # Cleanup after successful deployment
+      - aws ecs update-service --cluster retail-store --service retail-store-service --desired-count 0
+      - echo "Scaled down Fargate tasks"
 artifacts:
   files:
     - dist/docker-compose/docker-compose.yml
+    - task-definition.json
     - appspec.yml
+  name: docker-artifact
