@@ -1,0 +1,42 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      java: corretto17
+      nodejs: 18
+    commands:
+      # Install CheckStyle
+      - wget https://github.com/checkstyle/checkstyle/releases/download/checkstyle-10.3.3/checkstyle-10.3.3-all.jar
+      # Install ESLint
+      - cd src/checkout
+      - npm install eslint
+
+  pre_build:
+    commands:
+      - echo "Starting static code analysis"
+
+  build:
+    commands:
+      # Run CheckStyle on Cart Service
+      - cd ../cart
+      - java -jar checkstyle-10.3.3-all.jar -c /google_checks.xml src/main/java/
+      
+      # Run ESLint on Checkout Service
+      - cd ../checkout
+      - ./node_modules/.bin/eslint .
+
+  post_build:
+    commands:
+      - echo "Static analysis completed"
+
+reports:
+  checkstyle-report:
+    files:
+      - 'checkstyle-result.xml'
+    file-format: JUNITXML
+
+artifacts:
+  files:
+    - checkstyle-result.xml
+    - eslint-report.json
