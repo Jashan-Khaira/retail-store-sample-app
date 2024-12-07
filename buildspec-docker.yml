@@ -169,7 +169,11 @@ phases:
               "image": "rabbitmq:3-management",
               "portMappings": [
                 {"containerPort": 5672, "protocol": "tcp"},
-                {"containerPort": 15672, "protocol": "tcp"}
+                {"containerPort": 15672, "protocol": "tcp"},
+                {"containerPort": 4369, "protocol": "tcp"},
+                {"containerPort": 5671, "protocol": "tcp"},
+                {"containerPort": 15671, "protocol": "tcp"},
+                {"containerPort": 25672, "protocol": "tcp"}
               ],
               "logConfiguration": {
                 "logDriver": "awslogs",
@@ -201,6 +205,9 @@ phases:
               "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-ui:latest",
               "essential": true,
               "portMappings": [{"containerPort": 8080, "protocol": "tcp"}],
+              "environment": [
+                {"name": "PORT", "value": "8080"}
+              ],
               "logConfiguration": {
                 "logDriver": "awslogs",
                 "options": {
@@ -213,7 +220,10 @@ phases:
             {
               "name": "assets",
               "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-assets:latest",
-              "portMappings": [{"containerPort": 8081, "protocol": "tcp"}],
+              "portMappings": [{"containerPort": 8080, "protocol": "tcp"}],
+              "environment": [
+                {"name": "PORT", "value": "8080"}
+              ],
               "logConfiguration": {
                 "logDriver": "awslogs",
                 "options": {
@@ -226,7 +236,12 @@ phases:
             {
               "name": "cart",
               "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-cart:latest",
-              "portMappings": [{"containerPort": 8082, "protocol": "tcp"}],
+              "portMappings": [{"containerPort": 8080, "protocol": "tcp"}],
+              "environment": [
+                {"name": "PORT", "value": "8080"},
+                {"name": "CARTS_DB_HOST", "value": "localhost"},
+                {"name": "CARTS_DB_PORT", "value": "8000"}
+              ],
               "logConfiguration": {
                 "logDriver": "awslogs",
                 "options": {
@@ -239,7 +254,13 @@ phases:
             {
               "name": "catalog",
               "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-catalog:latest",
-              "portMappings": [{"containerPort": 8083, "protocol": "tcp"}],
+              "portMappings": [{"containerPort": 8080, "protocol": "tcp"}],
+              "environment": [
+                {"name": "PORT", "value": "8080"},
+                {"name": "DB_HOST", "value": "localhost"},
+                {"name": "DB_PORT", "value": "3306"},
+                {"name": "DB_NAME", "value": "catalog"}
+              ],
               "logConfiguration": {
                 "logDriver": "awslogs",
                 "options": {
@@ -252,7 +273,12 @@ phases:
             {
               "name": "checkout",
               "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-checkout:latest",
-              "portMappings": [{"containerPort": 8084, "protocol": "tcp"}],
+              "portMappings": [{"containerPort": 8080, "protocol": "tcp"}],
+              "environment": [
+                {"name": "PORT", "value": "8080"},
+                {"name": "REDIS_HOST", "value": "localhost"},
+                {"name": "REDIS_PORT", "value": "6379"}
+              ],
               "logConfiguration": {
                 "logDriver": "awslogs",
                 "options": {
@@ -265,7 +291,13 @@ phases:
             {
               "name": "orders",
               "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-orders:latest",
-              "portMappings": [{"containerPort": 8085, "protocol": "tcp"}],
+              "portMappings": [{"containerPort": 8080, "protocol": "tcp"}],
+              "environment": [
+                {"name": "PORT", "value": "8080"},
+                {"name": "DB_HOST", "value": "localhost"},
+                {"name": "DB_PORT", "value": "5432"},
+                {"name": "DB_NAME", "value": "orders"}
+              ],
               "logConfiguration": {
                 "logDriver": "awslogs",
                 "options": {
@@ -282,21 +314,34 @@ phases:
       # Deploy supporting services first
       - aws ecs register-task-definition --cli-input-json file://task-definition-support.json
       - |
+        echo "Getting support task definition ARN..."
         SUPPORT_TASK_DEF_ARN=$(aws ecs describe-task-definition --task-definition retail-store-support --query 'taskDefinition.taskDefinitionArn' --output text)
         
+        if [ -z "$SUPPORT_TASK_DEF_ARN" ]; then
+          echo "Failed to get support task definition ARN"
+          exit 1
+        fi
+        
+        echo "Using support task definition: $SUPPORT_TASK_DEF_ARN"
+        
         # Create or update support service
-        aws ecs create-service \
-          --cluster retail-store \
-          --service-name retail-store-support-service \
-          --task-definition $SUPPORT_TASK_DEF_ARN \
-          --desired-count 1 \
-          --launch-type FARGATE \
-          --network-configuration "awsvpcConfiguration={subnets=[subnet-00fb14dcb92d6fe8f],securityGroups=[sg-068ffbbf3f461bce2],assignPublicIp=ENABLED}" || \
-        aws ecs update-service \
-          --cluster retail-store \
-          --service retail-store-support-service \
-          --task-definition $SUPPORT_TASK_DEF_ARN \
-          --force-new-deployment
+        if aws ecs describe-services --cluster retail-store --services retail-store-support-service --query 'services[0].status' --output text 2>/dev/null; then
+          echo "Updating existing support service..."
+          aws ecs update-service \
+            --cluster retail-store \
+            --service retail-store-support-service \
+            --task-definition "$SUPPORT_TASK_DEF_ARN" \
+            --force-new-deployment
+        else
+          echo "Creating new support service..."
+          aws ecs create-service \
+            --cluster retail-store \
+            --service-name retail-store-support-service \
+            --task-definition "$SUPPORT_TASK_DEF_ARN" \
+            --desired-count 1 \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[subnet-00fb14dcb92d6fe8f],securityGroups=[sg-068ffbbf3f461bce2],assignPublicIp=ENABLED}"
+        fi
 
       # Wait for support services with debugging
       - |
@@ -304,26 +349,30 @@ phases:
         MAX_ATTEMPTS=30
         ATTEMPT=0
         while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
-          STATUS=$(aws ecs describe-services --cluster retail-store --services retail-store-support-service --query 'services[0].status' --output text)
-          if [ "$STATUS" = "ACTIVE" ]; then
-            RUNNING_COUNT=$(aws ecs describe-services --cluster retail-store --services retail-store-support-service --query 'services[0].runningCount' --output text)
-            DESIRED_COUNT=$(aws ecs describe-services --cluster retail-store --services retail-store-support-service --query 'services[0].desiredCount' --output text)
-            
-            # Get the latest task
-            TASK_ARN=$(aws ecs list-tasks --cluster retail-store --service-name retail-store-support-service --query 'taskArns[0]' --output text)
-            if [ "$TASK_ARN" != "None" ]; then
-              echo "Latest task status:"
-              aws ecs describe-tasks --cluster retail-store --tasks $TASK_ARN
-            fi
-            
-            if [ "$RUNNING_COUNT" = "$DESIRED_COUNT" ]; then
-              echo "Support service is stable"
-              break
-            fi
+          echo "Checking support service status (Attempt $((ATTEMPT+1))/$MAX_ATTEMPTS)..."
+          
+          SERVICE_JSON=$(aws ecs describe-services --cluster retail-store --services retail-store-support-service)
+          STATUS=$(echo $SERVICE_JSON | jq -r '.services[0].status')
+          RUNNING_COUNT=$(echo $SERVICE_JSON | jq -r '.services[0].runningCount')
+          DESIRED_COUNT=$(echo $SERVICE_JSON | jq -r '.services[0].desiredCount')
+          
+          echo "Status: $STATUS, Running: $RUNNING_COUNT, Desired: $DESIRED_COUNT"
+          
+          if [ "$STATUS" = "ACTIVE" ] && [ "$RUNNING_COUNT" = "$DESIRED_COUNT" ]; then
+            echo "Support service is stable"
+            break
           fi
-          echo "Waiting for support service to stabilize... Attempt $((ATTEMPT+1))/$MAX_ATTEMPTS"
-          echo "Current service status:"
-          aws ecs describe-services --cluster retail-store --services retail-store-support-service
+          
+          # Get latest task status and events
+          echo "Recent service events:"
+          aws ecs describe-services --cluster retail-store --services retail-store-support-service --query 'services[0].events[0:5]'
+          
+          TASK_ARN=$(aws ecs list-tasks --cluster retail-store --service-name retail-store-support-service --query 'taskArns[0]' --output text)
+          if [ "$TASK_ARN" != "None" ]; then
+            echo "Latest task status:"
+            aws ecs describe-tasks --cluster retail-store --tasks $TASK_ARN
+          fi
+          
           sleep 20
           ATTEMPT=$((ATTEMPT+1))
         done
@@ -331,9 +380,84 @@ phases:
       # Deploy main services
       - aws ecs register-task-definition --cli-input-json file://task-definition-main.json
       - |
+        echo "Getting main task definition ARN..."
         MAIN_TASK_DEF_ARN=$(aws ecs describe-task-definition --task-definition retail-store-main --query 'taskDefinition.taskDefinitionArn' --output text)
         
+        if [ -z "$MAIN_TASK_DEF_ARN" ]; then
+          echo "Failed to get main task definition ARN"
+          exit 1
+        fi
+        
+        echo "Using main task definition: $MAIN_TASK_DEF_ARN"
+        
         # Create or update main service
-        aws ecs create-service \
-          --cluster retail-store \
-          --service-name retail-store-main-service \
+        if aws ecs describe-services --cluster retail-store --services retail-store-main-service --query 'services[0].status' --output text 2>/dev/null; then
+          echo "Updating existing main service..."
+          aws ecs update-service \
+            --cluster retail-store \
+            --service retail-store-main-service \
+            --task-definition "$MAIN_TASK_DEF_ARN" \
+            --force-new-deployment
+        else
+          echo "Creating new main service..."
+          aws ecs create-service \
+            --cluster retail-store \
+            --service-name retail-store-main-service \
+            --task-definition "$MAIN_TASK_DEF_ARN" \
+            --desired-count 1 \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[subnet-00fb14dcb92d6fe8f],securityGroups=[sg-068ffbbf3f461bce2],assignPublicIp=ENABLED}"
+        fi
+
+      # Wait for main service with debugging
+      - |
+        echo "Waiting for main service to be stable..."
+        MAX_ATTEMPTS=30
+        ATTEMPT=0
+        while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+          echo "Checking main service status (Attempt $((ATTEMPT+1))/$MAX_ATTEMPTS)..."
+          
+          SERVICE_JSON=$(aws ecs describe-services --cluster retail-store --services retail-store-main-service)
+          STATUS=$(echo $SERVICE_JSON | jq -r '.services[0].status')
+          RUNNING_COUNT=$(echo $SERVICE_JSON | jq -r '.services[0].runningCount')
+          DESIRED_COUNT=$(echo $SERVICE_JSON | jq -r '.services[0].desiredCount')
+          
+          echo "Status: $STATUS, Running: $RUNNING_COUNT, Desired: $DESIRED_COUNT"
+          
+          if [ "$STATUS" = "ACTIVE" ] && [ "$RUNNING_COUNT" = "$DESIRED_COUNT" ]; then
+            echo "Main service is stable"
+            break
+          fi
+          
+          # Get latest task status and events
+          echo "Recent service events:"
+          aws ecs describe-services --cluster retail-store --services retail-store-main-service --query 'services[0].events[0:5]'
+          
+          TASK_ARN=$(aws ecs list-tasks --cluster retail-store --service-name retail-store-main-service --query 'taskArns[0]' --output text)
+          if [ "$TASK_ARN" != "None" ]; then
+            echo "Latest task status:"
+            aws ecs describe-tasks --cluster retail-store --tasks $TASK_ARN
+          fi
+          
+          sleep 20
+          ATTEMPT=$((ATTEMPT+1))
+        done
+
+  post_build:
+    commands:
+      - echo "Service deployment completed"
+      # Print final status of both services
+      - |
+        echo "Final status of services:"
+        echo "Support service:"
+        aws ecs describe-services --cluster retail-store --services retail-store-support-service
+        echo "Main service:"
+        aws ecs describe-services --cluster retail-store --services retail-store-main-service
+
+artifacts:
+  files:
+    - dist/docker-compose/docker-compose.yml
+    - task-definition-support.json
+    - task-definition-main.json
+    - appspec.yml
+  name: docker-artifact
