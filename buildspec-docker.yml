@@ -52,7 +52,7 @@ phases:
       # Clean up local containers
       - docker-compose down
       
-      # Generate ECS task definition for supporting services (databases, message broker)
+      # Generate ECS task definition for supporting services
       - |
         cat > task-definition-support.json << 'EOF'
         {
@@ -67,12 +67,12 @@ phases:
             {
               "name": "carts-db",
               "image": "amazon/dynamodb-local:1.20.0",
-              "portMappings": [{"containerPort": 8000, "hostPort": 8000}]
+              "portMappings": [{"containerPort": 8000, "protocol": "tcp"}]
             },
             {
               "name": "catalog-db",
               "image": "mariadb:10.9",
-              "portMappings": [{"containerPort": 3306, "hostPort": 3306}],
+              "portMappings": [{"containerPort": 3306, "protocol": "tcp"}],
               "environment": [
                 {"name": "MYSQL_ROOT_PASSWORD", "value": "123456789"},
                 {"name": "MYSQL_DATABASE", "value": "catalog"}
@@ -81,12 +81,12 @@ phases:
             {
               "name": "checkout-redis",
               "image": "redis:6-alpine",
-              "portMappings": [{"containerPort": 6379, "hostPort": 6379}]
+              "portMappings": [{"containerPort": 6379, "protocol": "tcp"}]
             },
             {
               "name": "orders-db",
               "image": "postgres:16.1",
-              "portMappings": [{"containerPort": 5432, "hostPort": 5432}],
+              "portMappings": [{"containerPort": 5432, "protocol": "tcp"}],
               "environment": [
                 {"name": "POSTGRES_DB", "value": "orders"},
                 {"name": "POSTGRES_USER", "value": "postgres"},
@@ -97,8 +97,8 @@ phases:
               "name": "rabbitmq",
               "image": "rabbitmq:3-management",
               "portMappings": [
-                {"containerPort": 5672, "hostPort": 5672},
-                {"containerPort": 15672, "hostPort": 15672}
+                {"containerPort": 5672, "protocol": "tcp"},
+                {"containerPort": 15672, "protocol": "tcp"}
               ]
             }
           ]
@@ -121,32 +121,32 @@ phases:
               "name": "ui",
               "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-ui:latest",
               "essential": true,
-              "portMappings": [{"containerPort": 8080, "hostPort": 8080}]
+              "portMappings": [{"containerPort": 8080, "protocol": "tcp"}]
             },
             {
               "name": "assets",
               "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-assets:latest",
-              "portMappings": [{"containerPort": 8080, "hostPort": 8081}]
+              "portMappings": [{"containerPort": 8080, "protocol": "tcp"}]
             },
             {
               "name": "cart",
               "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-cart:latest",
-              "portMappings": [{"containerPort": 8080, "hostPort": 8082}]
+              "portMappings": [{"containerPort": 8080, "protocol": "tcp"}]
             },
             {
               "name": "catalog",
               "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-catalog:latest",
-              "portMappings": [{"containerPort": 8080, "hostPort": 8083}]
+              "portMappings": [{"containerPort": 8080, "protocol": "tcp"}]
             },
             {
               "name": "checkout",
               "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-checkout:latest",
-              "portMappings": [{"containerPort": 8080, "hostPort": 8084}]
+              "portMappings": [{"containerPort": 8080, "protocol": "tcp"}]
             },
             {
               "name": "orders",
               "image": "061039764011.dkr.ecr.us-east-1.amazonaws.com/retail-store-orders:latest",
-              "portMappings": [{"containerPort": 8080, "hostPort": 8085}]
+              "portMappings": [{"containerPort": 8080, "protocol": "tcp"}]
             }
           ]
         }
@@ -171,21 +171,29 @@ phases:
           --task-definition $SUPPORT_TASK_DEF_ARN \
           --force-new-deployment
 
-      # Add debugging for support services
+      # Add debugging for support services and wait for stability
+      - |
+        echo "Waiting for support services to be stable..."
+        MAX_ATTEMPTS=30
+        ATTEMPT=0
+        while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+          STATUS=$(aws ecs describe-services --cluster retail-store --services retail-store-support-service --query 'services[0].status' --output text)
+          if [ "$STATUS" = "ACTIVE" ]; then
+            RUNNING_COUNT=$(aws ecs describe-services --cluster retail-store --services retail-store-support-service --query 'services[0].runningCount' --output text)
+            DESIRED_COUNT=$(aws ecs describe-services --cluster retail-store --services retail-store-support-service --query 'services[0].desiredCount' --output text)
+            if [ "$RUNNING_COUNT" = "$DESIRED_COUNT" ]; then
+              echo "Support service is stable"
+              break
+            fi
+          fi
+          echo "Waiting for support service to stabilize... Attempt $((ATTEMPT+1))/$MAX_ATTEMPTS"
+          sleep 20
+          ATTEMPT=$((ATTEMPT+1))
+        done
+
+      # Check support service status
       - echo "Checking support service status..."
       - aws ecs describe-services --cluster retail-store --services retail-store-support-service
-      - echo "Checking recent support tasks..."
-      - aws ecs list-tasks --cluster retail-store --service-name retail-store-support-service
-      - |
-        SUPPORT_TASK_ARN=$(aws ecs list-tasks --cluster retail-store --service-name retail-store-support-service --query 'taskArns[0]' --output text)
-        if [ "$SUPPORT_TASK_ARN" != "None" ]; then
-          echo "Checking support task details..."
-          aws ecs describe-tasks --cluster retail-store --tasks $SUPPORT_TASK_ARN
-        fi
-
-      # Wait for support services with increased timeout
-      - echo "Waiting for support services to be stable..."
-      - aws ecs wait services-stable --cluster retail-store --services retail-store-support-service --max-attempts 60 || true
       
       # Deploy main services
       - aws ecs register-task-definition --cli-input-json file://task-definition-main.json
@@ -206,22 +214,32 @@ phases:
           --task-definition $MAIN_TASK_DEF_ARN \
           --force-new-deployment
 
-      # Add debugging for main services
+      # Add debugging for main services and wait for stability
+      - |
+        echo "Waiting for main services to be stable..."
+        MAX_ATTEMPTS=30
+        ATTEMPT=0
+        while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+          STATUS=$(aws ecs describe-services --cluster retail-store --services retail-store-main-service --query 'services[0].status' --output text)
+          if [ "$STATUS" = "ACTIVE" ]; then
+            RUNNING_COUNT=$(aws ecs describe-services --cluster retail-store --services retail-store-main-service --query 'services[0].runningCount' --output text)
+            DESIRED_COUNT=$(aws ecs describe-services --cluster retail-store --services retail-store-main-service --query 'services[0].desiredCount' --output text)
+            if [ "$RUNNING_COUNT" = "$DESIRED_COUNT" ]; then
+              echo "Main service is stable"
+              break
+            fi
+          fi
+          echo "Waiting for main service to stabilize... Attempt $((ATTEMPT+1))/$MAX_ATTEMPTS"
+          sleep 20
+          ATTEMPT=$((ATTEMPT+1))
+        done
+
+      # Check main service status
       - echo "Checking main service status..."
       - aws ecs describe-services --cluster retail-store --services retail-store-main-service
-      - echo "Checking recent main tasks..."
-      - aws ecs list-tasks --cluster retail-store --service-name retail-store-main-service
-      - |
-        MAIN_TASK_ARN=$(aws ecs list-tasks --cluster retail-store --service-name retail-store-main-service --query 'taskArns[0]' --output text)
-        if [ "$MAIN_TASK_ARN" != "None" ]; then
-          echo "Checking main task details..."
-          aws ecs describe-tasks --cluster retail-store --tasks $MAIN_TASK_ARN
-        fi
 
   post_build:
     commands:
-      - echo "Waiting for services to be stable..."
-      - aws ecs wait services-stable --cluster retail-store --services retail-store-main-service --max-attempts 60 || true
       - echo "Service deployment completed"
 artifacts:
   files:
